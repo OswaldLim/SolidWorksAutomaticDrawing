@@ -10,6 +10,8 @@ namespace SolidWorksBatchDXF
 {
     class Program
     {
+        private static HashSet<string> exportedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         private const string OutputFolder = @"C:\Users\Lenovo\Desktop\AssemblyDrawings";
 
         static void Main(string[] args)
@@ -100,21 +102,26 @@ namespace SolidWorksBatchDXF
         {
             if (partModel == null) return;
 
-            string name = comp.Name2 ?? "Part";
+            // Get the real part file path
+            string modelPath = partModel.GetPathName();
+            if (string.IsNullOrEmpty(modelPath)) return;
 
-            // Remove any assembly suffixes like "-1^TopAssembly"
-            int caretIndex = name.IndexOf('^');
-            if (caretIndex >= 0)
-                name = name.Substring(0, caretIndex);
+            // Avoid duplicate exports
+            if (exportedParts.Contains(modelPath))
+            {
+                Console.WriteLine($"⚠️ Skipping duplicate part: {modelPath}");
+                return;
+            }
+            exportedParts.Add(modelPath);
 
-            // Get just the filename (no path)
-            name = Path.GetFileNameWithoutExtension(name);
+            // Use file name (not component instance name)
+            string name = Path.GetFileNameWithoutExtension(modelPath);
 
-            // Remove trailing ".step" if present
+            // Clean up trailing ".step"
             if (name.EndsWith(".step", StringComparison.OrdinalIgnoreCase))
                 name = name.Substring(0, name.Length - 5);
 
-            // Make it safe for filesystem
+            // Make filesystem-safe
             string safeName = string.Concat(name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
 
             // Final output path
