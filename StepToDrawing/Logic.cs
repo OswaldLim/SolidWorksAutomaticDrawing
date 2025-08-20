@@ -10,16 +10,15 @@ namespace SolidWorksBatchDXF
     public static class Logic
     {
         private static HashSet<string> exportedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private const string OutputFolder = @"C:\Users\Lenovo\Desktop\AssemblyDrawings";
 
-        public static void RunBatchExport()
+        public static void RunBatchExport(string inputFolder, string outputFolder)
         {
-            Directory.CreateDirectory(OutputFolder);
+            Directory.CreateDirectory(outputFolder);
 
             SldWorks swApp = new SldWorks();
             swApp.Visible = true;
 
-            string asmFilePath = @"C:\Users\Lenovo\Desktop\SCHOOL\Personal\NL METAL\Solidworks Automation\AssemblyFiles\BL1000_20230528.SLDASM";
+            string asmFilePath = $@"{inputFolder}";
             int errs = 0, warns = 0;
 
             ModelDoc2 asmDoc = swApp.OpenDoc6(
@@ -42,7 +41,7 @@ namespace SolidWorksBatchDXF
             if (topComps != null)
             {
                 foreach (Component2 top in topComps)
-                    ProcessComponentRecursive(swApp, top, OutputFolder);
+                    ProcessComponentRecursive(swApp, top, outputFolder);
             }
         }
 
@@ -107,7 +106,8 @@ namespace SolidWorksBatchDXF
             string safeName = string.Concat(name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
             string outPath = Path.Combine(outputFolder, safeName + ".slddrw");
 
-            string template = @"C:\ProgramData\SOLIDWORKS\SOLIDWORKS 2021\lang\english\sheetformat\A4 - Landscape.DRWDOT";
+
+            string template = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates", "A4 - Landscape.DRWDOT");
 
             ModelDoc2 drwModel = swApp.NewDocument(template, (int)swDwgPaperSizes_e.swDwgPaperA4size, 0, 0);
             if (drwModel == null)

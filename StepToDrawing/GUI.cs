@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Windows.Forms;
+using SolidWorksBatchDXF;
+using StepToDrawing;
 
 namespace StepToDrawing
 {
@@ -124,6 +126,7 @@ namespace StepToDrawing
             }
 
             // TODO: Call your backend logic here
+            Logic.RunBatchExport(inputFile, outputFolder);
             MessageBox.Show($"Running process...\nInput: {inputFile}\nOutput: {outputFolder}");
         }
     }
