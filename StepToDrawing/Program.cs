@@ -1,7 +1,9 @@
 ﻿using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 
 namespace SolidWorksBatchDXF
@@ -67,7 +69,10 @@ namespace SolidWorksBatchDXF
             {
                 // For subassembly, create a separate drawing
                 string asmName = comp.Name2 ?? "SubAssembly";
-                string safeName = string.Join("_", asmName.Split(Path.GetInvalidFileNameChars()));
+                string asmBase = Path.GetFileNameWithoutExtension(asmName);
+                string safeName = string.Concat(
+                    asmBase.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries)
+                );
                 string subFolder = Path.Combine(outputFolder, safeName);
                 Directory.CreateDirectory(subFolder);
 
@@ -96,114 +101,149 @@ namespace SolidWorksBatchDXF
             if (partModel == null) return;
 
             string name = comp.Name2 ?? "Part";
-            string safeName = string.Join("_", name.Split(Path.GetInvalidFileNameChars()));
+
+            // Remove any assembly suffixes like "-1^TopAssembly"
+            int caretIndex = name.IndexOf('^');
+            if (caretIndex >= 0)
+                name = name.Substring(0, caretIndex);
+
+            // Get just the filename (no path)
+            name = Path.GetFileNameWithoutExtension(name);
+
+            // Remove trailing ".step" if present
+            if (name.EndsWith(".step", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - 5);
+
+            // Make it safe for filesystem
+            string safeName = string.Concat(name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+
+            // Final output path
             string outPath = Path.Combine(outputFolder, safeName + ".slddrw");
 
-            // 🔹 Find the longest linear edges along X and Y
-            double maxX = 0, maxY = 0;
-            Edge longestX = null, longestY = null;
-
-            Feature feat = (Feature)partModel.FirstFeature();
-            while (feat != null)
-            {
-                object[] bodies = feat.GetBody();
-                if (bodies != null)
-                {
-                    foreach (Body2 body in bodies)
-                    {
-                        object[] edges = (object[])body.GetEdges();
-                        if (edges != null)
-                        {
-                            foreach (Edge edge in edges)
-                            {
-                                Curve curve = edge.GetCurve();
-                                if (curve != null && curve.GetType().Name.Contains("Line"))
-                                {
-                                    Vertex startVertex = edge.GetStartVertex();
-                                    Vertex endVertex = edge.GetEndVertex();
-
-                                    double[] startPt = (double[])startVertex.GetPoint();
-                                    double[] endPt = (double[])endVertex.GetPoint();
-
-                                    double dx = endPt[0] - startPt[0];
-                                    double dy = endPt[1] - startPt[1];
-                                    double dz = endPt[2] - startPt[2];
-                                    double length = Math.Sqrt(dx * dx + dy * dy + dz * dz);
-
-                                    if (Math.Abs(dx) > 0.99 && length > maxX) { maxX = length; longestX = edge; }
-                                    if (Math.Abs(dy) > 0.99 && length > maxY) { maxY = length; longestY = edge; }
-                                }
-                            }
-                        }
-                    }
-                }
-                feat = feat.GetNextFeature() as Feature;
-            }
-
-            // Select the longest edges
-            if (longestX != null)
-                partModel.Extension.SelectByID2("", "EDGE", 0, 0, 0, true, 0, null, 0);
-            if (longestY != null)
-                partModel.Extension.SelectByID2("", "EDGE", 0, 0, 0, true, 0, null, 0);
 
             // Load drawing template
             string template = @"C:\ProgramData\SOLIDWORKS\SOLIDWORKS 2021\lang\english\sheetformat\A4 - Landscape.DRWDOT";
+            //string template = @"C:\ProgramData\SOLIDWORKS\SOLIDWORKS 2021\lang\english\sheetformat\a4 - landscape.slddrt";
+
             ModelDoc2 drwModel = swApp.NewDocument(template, (int)swDwgPaperSizes_e.swDwgPaperA4size, 0, 0);
             if (drwModel == null) { Console.WriteLine($"❌ Failed to create drawing for {name}"); return; }
 
             DrawingDoc drwDoc = (DrawingDoc)drwModel;
 
-
             // Insert 3rd-angle standard views
             drwDoc.Create3rdAngleViews2(partModel.GetPathName());
 
-            // Get the front view (skip sheet format)
+            //Get the front view(skip sheet format)
             View frontView = drwDoc.GetFirstView().GetNextView();
-            if (frontView != null)
+            while (frontView != null)
             {
-                // Access the current transform
-                MathTransform trans = frontView.ModelToViewTransform;
+                double[] vPos = frontView.Position;
+                vPos[0] += 0.01;
+                vPos[1] -= 0.01;
+                frontView.Position = vPos;
 
-                // Create a translation vector: move down by 0.05 m each iteration
-                double[] translationArray = new double[] { 0, -0.05, 0 };
-                MathUtility swMath = (MathUtility)swApp.GetMathUtility();
-                MathTransform translation = swMath.CreateTransform(translationArray);
-
-                // Loop 3 times
-                for (int i = 0; i < 3; i++)
+                if (frontView != null)
                 {
-                    MathTransform newTransform = trans.IMultiply(translation);
-                    frontView.ModelToViewTransform = newTransform;
+                    drwModel.Extension.SelectByID2(frontView.Name, "DRAWINGVIEW", 0, 0, 0, false, 0, null, 0);
 
-                    // Update trans so next iteration applies on top of the previous
-                    trans = frontView.ModelToViewTransform;
-
-                    // Repeat for top/right views if needed
-                    View topView = frontView.GetNextView();
-                    if (topView != null)
-                    {
-                        MathTransform topTrans = topView.ModelToViewTransform;
-                        topView.ModelToViewTransform = topTrans.IMultiply(translation);
-                    }
+                    int autoDimSuccess = drwDoc.AutoDimension(
+                        (int)swAutodimEntities_e.swAutodimEntitiesBasedOnPreselect,
+                        (int)swAutodimScheme_e.swAutodimSchemeBaseline,
+                        (int)swAutodimHorizontalPlacement_e.swAutodimHorizontalPlacementAbove,
+                        (int)swAutodimScheme_e.swAutodimSchemeBaseline,
+                        (int)swAutodimVerticalPlacement_e.swAutodimVerticalPlacementRight
+                    );
+                    Console.WriteLine($"Auto-dimensioned view: {autoDimSuccess}");
                 }
-            }
 
+                object[] anns = frontView.GetAnnotations();
+                Console.WriteLine(frontView.GetAnnotationCount());
+
+                if (anns != null)
+                {
+                    Console.WriteLine("Inside");
+                    List<(Annotation ann, double val)> horizDims = new List<(Annotation, double)>();
+                    List<(Annotation ann, double val)> vertDims = new List<(Annotation, double)>();
+
+                    foreach (object a in anns)
+                    {
+                        Annotation swAnn = (Annotation)a;
+                        DisplayDimension specAnn = swAnn.GetSpecificAnnotation();
+
+                        if (specAnn != null && specAnn is DisplayDimension swDispDim)
+                        {
+                            Dimension swDim = swDispDim.GetDimension();
+                            int type = swDispDim.GetType();
+
+                            double val = swDim.GetSystemValue2(""); // always meters
+
+                            // Try to determine orientation
+                            // Use DisplayData line to figure out angle of the dimension line
+                            DisplayData swDispData = swDispDim.GetDisplayData();
+
+                            // Get first line segment of this annotation (dimension line)
+                            object raw = swDispData.GetLineAtIndex3(0);
+                            if (raw is Array arr && arr.Length >= 10)
+                            {
+                                double startX = (double)arr.GetValue(4);
+                                double startY = (double)arr.GetValue(5);
+                                double endX = (double)arr.GetValue(7);
+                                double endY = (double)arr.GetValue(8);
+
+                                double dx = endX - startX;
+                                double dy = endY - startY;
+
+                                // angle in radians
+                                double angle = Math.Atan2(dy, dx);
+
+                                // near 0° or 180° → horizontal
+                                // near 90° or 270° → vertical
+                                if (Math.Abs(Math.Sin(angle)) < 0.5) // closer to horizontal
+                                    horizDims.Add((swAnn, val));
+                                else
+                                    vertDims.Add((swAnn, val));
+                            }
+                        }
+                    }
+
+                    // Sort both lists descending by dimension value
+                    horizDims = horizDims.OrderByDescending(d => d.val).ToList();
+                    vertDims = vertDims.OrderByDescending(d => d.val).ToList();
+
+                    Console.WriteLine($"Horiz: {horizDims.Count}, Vert: {vertDims.Count}");
+
+
+                    int deleted = 0;
+
+                    // Keep only the 3 largest, delete the rest
+                    for (int i = 1; i < horizDims.Count - 1; i++)
+                    {
+                        Annotation swAnn = horizDims[i].ann;
+                        swAnn.Select2(false, 0);
+                        drwModel.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed);
+                        deleted++;
+                    }
+                    Console.WriteLine($"Deleted {deleted} horizontal annotations");
+                    deleted = 0;
+
+                    // Trim vertical dimensions
+                    for (int i = 1; i < vertDims.Count -1 ; i++)
+                    {
+                        Annotation swAnn = vertDims[i].ann;
+                        swAnn.Select2(false, 0);
+                        drwModel.Extension.DeleteSelection2((int)swDeleteSelectionOptions_e.swDelete_Absorbed);
+                        deleted++;
+                    }
+                    Console.WriteLine($"Deleted {deleted} vertical annotations");
+                }
+
+                frontView = frontView.GetNextView();
+                drwDoc.EditRebuild();
+            }
 
             // Auto-dimension based on preselected edges
             View firstView = drwDoc.GetFirstView().GetNextView(); // Skip sheet format
-            if (firstView != null)
-            {
-                drwModel.Extension.SelectByID2(firstView.Name, "DRAWINGVIEW", 0, 0, 0, false, 0, null, 0);
 
-                int autoDimSuccess = drwDoc.AutoDimension(
-                    (int)swAutodimEntities_e.swAutodimEntitiesBasedOnPreselect,
-                    (int)swAutodimScheme_e.swAutodimSchemeBaseline,
-                    (int)swAutodimHorizontalPlacement_e.swAutodimHorizontalPlacementAbove,
-                    (int)swAutodimScheme_e.swAutodimSchemeBaseline,
-                    (int)swAutodimVerticalPlacement_e.swAutodimVerticalPlacementRight
-                );
-                Console.WriteLine($"Auto-dimensioned view: {autoDimSuccess}");
-            }
 
             // Add isometric view
             if (firstView != null)
@@ -211,8 +251,8 @@ namespace SolidWorksBatchDXF
                 object outlineObj = firstView.GetOutline();
                 double[] outline = (double[])outlineObj;
 
-                double xIso = outline[2] + 0.1;
-                double yIso = outline[3] + 0.06;
+                double xIso = outline[2] + 0.12;
+                double yIso = outline[3] + 0.05;
                 double scale = firstView.ScaleDecimal;
 
                 View isoView = drwDoc.CreateDrawViewFromModelView3(partModel.GetPathName(), "*Isometric", xIso, yIso, scale);
