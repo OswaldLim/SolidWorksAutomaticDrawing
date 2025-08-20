@@ -11,39 +11,69 @@ namespace SolidWorksBatchDXF
     {
         private static HashSet<string> exportedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        public static void RunBatchExport(string inputFolder, string outputFolder)
+        // Keep a dictionary of counters for each folder (resets for subassemblies)
+        private static Dictionary<string, int> folderCounters = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        public static void RunBatchExport(string inputFile, string outputFolder)
         {
+            if (!File.Exists(inputFile))
+            {
+                Console.WriteLine($"❌ Input file does not exist: {inputFile}");
+                return;
+            }
+
             Directory.CreateDirectory(outputFolder);
+
+            // Initialize top-level counter
+            folderCounters[outputFolder] = 1;
 
             SldWorks swApp = new SldWorks();
             swApp.Visible = true;
 
-            string asmFilePath = $@"{inputFolder}";
             int errs = 0, warns = 0;
 
-            ModelDoc2 asmDoc = swApp.OpenDoc6(
-                asmFilePath,
-                (int)swDocumentTypes_e.swDocASSEMBLY,
+            // Determine file type
+            string ext = Path.GetExtension(inputFile).ToLower();
+            int docType;
+
+            if (ext == ".sldasm")
+                docType = (int)swDocumentTypes_e.swDocASSEMBLY;
+            else // ".sldprt", ".step", ".stp"
+                docType = (int)swDocumentTypes_e.swDocPART;
+
+            ModelDoc2 doc = swApp.OpenDoc6(
+                inputFile,
+                docType,
                 (int)swOpenDocOptions_e.swOpenDocOptions_Silent,
                 "",
                 ref errs,
-                ref warns);
+                ref warns
+            );
 
-            if (asmDoc == null)
+            if (doc == null)
             {
-                Console.WriteLine("Failed to open assembly.");
+                Console.WriteLine("❌ Failed to open document.");
                 return;
             }
 
-            AssemblyDoc asm = (AssemblyDoc)asmDoc;
-            object[] topComps = (object[])asm.GetComponents(true);
-
-            if (topComps != null)
+            // If assembly, process components
+            if (docType == (int)swDocumentTypes_e.swDocASSEMBLY)
             {
-                foreach (Component2 top in topComps)
-                    ProcessComponentRecursive(swApp, top, outputFolder);
+                AssemblyDoc asm = (AssemblyDoc)doc;
+                object[] topComps = (object[])asm.GetComponents(true);
+                if (topComps != null)
+                {
+                    foreach (Component2 top in topComps)
+                        ProcessComponentRecursive(swApp, top, outputFolder);
+                }
+            }
+            else
+            {
+                // Single part or STEP file → treat as one component
+                TryExportSheetMetalOrPartDrawing(swApp, doc, null, outputFolder);
             }
         }
+
 
         private static void ProcessComponentRecursive(SldWorks swApp, Component2 comp, string outputFolder)
         {
@@ -67,6 +97,10 @@ namespace SolidWorksBatchDXF
                 );
                 string subFolder = Path.Combine(outputFolder, safeName);
                 Directory.CreateDirectory(subFolder);
+
+                // Reset counter for this subassembly folder
+                folderCounters[subFolder] = 1;
+
 
                 object[] kids = (object[])comp.GetChildren();
                 if (kids != null)
@@ -104,7 +138,18 @@ namespace SolidWorksBatchDXF
                 name = name.Substring(0, name.Length - 5);
 
             string safeName = string.Concat(name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
-            string outPath = Path.Combine(outputFolder, safeName + ".slddrw");
+
+            // --- NEW: Add numbering prefix ---
+            if (!folderCounters.ContainsKey(outputFolder))
+                folderCounters[outputFolder] = 1; // start at 1 if not initialized
+
+            int count = folderCounters[outputFolder];
+            folderCounters[outputFolder]++; // increment for next part
+
+            string numberedName = $"{count:00}_{safeName}";
+            string outPath = Path.Combine(outputFolder, numberedName + ".slddrw");
+            // ----------------------------------
+
 
 
             string template = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates", "A4 - Landscape.DRWDOT");
@@ -193,8 +238,8 @@ namespace SolidWorksBatchDXF
                     }
 
                     // Sort both lists descending by dimension value
-                    horizDims = horizDims.OrderByDescending(d => d.val).ToList();
-                    vertDims = vertDims.OrderByDescending(d => d.val).ToList();
+                    horizDims = horizDims.OrderBy(d => d.val).ToList();
+                    vertDims = vertDims.OrderBy(d => d.val).ToList();
 
                     Console.WriteLine($"Horiz: {horizDims.Count}, Vert: {vertDims.Count}");
 
@@ -223,9 +268,12 @@ namespace SolidWorksBatchDXF
                     Console.WriteLine($"Deleted {deleted} vertical annotations");
                 }
 
-                bool statuss = drwModel.Extension.AlignDimensions((int)swAlignDimensionType_e.swAlignDimensionType_AutoArrange, 0.001);
+                bool check = drwModel.Extension.AlignDimensions(
+                    (int)swAlignDimensionType_e.swAlignDimensionType_AutoArrange,
+                    0.02
+                );
 
-                Console.WriteLine(statuss);
+                Console.WriteLine(check);
 
                 frontView = frontView.GetNextView();
                 drwDoc.EditRebuild();

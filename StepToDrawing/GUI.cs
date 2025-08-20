@@ -1,7 +1,8 @@
-﻿using System;
-using System.Windows.Forms;
-using SolidWorksBatchDXF;
+﻿using SolidWorksBatchDXF;
 using StepToDrawing;
+using System;
+using System.IO;
+using System.Windows.Forms;
 
 namespace StepToDrawing
 {
@@ -55,7 +56,7 @@ namespace StepToDrawing
             {
                 Text = "Output Folder:",
                 Left = 20,
-                Top = 40,
+                Top = 50,
                 Width = 100
             };
             this.Controls.Add(outputFolderLabel);
@@ -64,7 +65,7 @@ namespace StepToDrawing
             outputFolderTextBox = new TextBox
             {
                 Left = 20,
-                Top = 60,
+                Top = 70,
                 Width = 250
             };
             this.Controls.Add(outputFolderTextBox);
@@ -74,7 +75,7 @@ namespace StepToDrawing
             {
                 Text = "Browse Folder...",
                 Left = 280,
-                Top = 58
+                Top = 68
             };
             outputFolderButton.Click += OutputFolderButton_Click;
             this.Controls.Add(outputFolderButton);
@@ -84,7 +85,7 @@ namespace StepToDrawing
             {
                 Text = "Run",
                 Left = 20,
-                Top = 100,
+                Top = 110,
                 Width = 100
             };
             runButton.Click += RunButton_Click;
@@ -95,13 +96,16 @@ namespace StepToDrawing
         {
             using (OpenFileDialog openFileDialog = new OpenFileDialog())
             {
-                openFileDialog.Filter = "STEP files (*.step;*.stp)|*.step;*.stp|All files (*.*)|*.*";
+                openFileDialog.Filter =
+                    "SolidWorks & STEP Files (*.sldasm;*.sldprt;*.step;*.stp)|*.sldasm;*.sldprt;*.step;*.stp|All files (*.*)|*.*";
+
                 if (openFileDialog.ShowDialog() == DialogResult.OK)
                 {
                     inputFileTextBox.Text = openFileDialog.FileName;
                 }
             }
         }
+
 
         private void OutputFolderButton_Click(object sender, EventArgs e)
         {
@@ -125,7 +129,14 @@ namespace StepToDrawing
                 return;
             }
 
-            // TODO: Call your backend logic here
+            string ext = Path.GetExtension(inputFile).ToLower();
+            if (ext != ".sldasm" && ext != ".sldprt" && ext != ".step" && ext != ".stp")
+            {
+                MessageBox.Show("Please select a valid SolidWorks assembly (.sldasm), part (.sldprt), or STEP (.step/.stp) file.");
+                return;
+            }
+
+            // Run the backend logic
             Logic.RunBatchExport(inputFile, outputFolder);
             MessageBox.Show($"Running process...\nInput: {inputFile}\nOutput: {outputFolder}");
         }
