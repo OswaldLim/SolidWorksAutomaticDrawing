@@ -270,7 +270,7 @@ namespace SolidWorksBatchDXF
 
                 bool check = drwModel.Extension.AlignDimensions(
                     (int)swAlignDimensionType_e.swAlignDimensionType_AutoArrange,
-                    0.02
+                    0.001
                 );
 
                 Console.WriteLine(check);
