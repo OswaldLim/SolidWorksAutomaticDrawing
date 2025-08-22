@@ -137,8 +137,10 @@ namespace StepToDrawing
             }
 
             // Run the backend logic
-            Logic.RunBatchExport(inputFile, outputFolder);
             MessageBox.Show($"Running process...\nInput: {inputFile}\nOutput: {outputFolder}");
+            Logic.RunBatchExport(inputFile, outputFolder);
+            MessageBox.Show($"Finished Running! \nInput: {inputFile}\nOutput: {outputFolder}");
+
         }
     }
 }

@@ -86,7 +86,8 @@ namespace SolidWorksBatchDXF
 
             if (docType == (int)swDocumentTypes_e.swDocPART)
             {
-                TryExportSheetMetalOrPartDrawing(swApp, model, comp, outputFolder);
+                //TryExportSheetMetalOrPartDrawing(swApp, model, comp, outputFolder);
+                TryExportSheetMetalOrPartDXF(swApp, model, comp, outputFolder);
             }
             else if (docType == (int)swDocumentTypes_e.swDocASSEMBLY)
             {
@@ -307,5 +308,130 @@ namespace SolidWorksBatchDXF
 
             swApp.CloseDoc(drwModel.GetTitle());
         }
+
+
+
+
+
+        private static bool ContainsSheetMetal(PartDoc swPart)
+        {
+            if (swPart == null)
+                return false;
+
+            object[] vBodies = (object[])swPart.GetBodies2((int)swBodyType_e.swAllBodies, true);
+
+            if (vBodies != null && vBodies.Length > 0)
+            {
+                foreach (object bodyObj in vBodies)
+                {
+                    Body2 swBody = bodyObj as Body2;
+                    if (swBody != null && swBody.IsSheetMetal())
+                    {
+                        return true; // Found sheet metal body
+                    }
+                }
+            }
+
+            return false; // None found
+        }
+
+
+
+        private static void TryExportSheetMetalOrPartDXF(SldWorks swApp, ModelDoc2 partModel, Component2 comp, string outputFolder)
+        {
+            if (partModel == null) return;
+
+            string modelPath = partModel.GetPathName();
+            if (string.IsNullOrEmpty(modelPath)) return;
+
+            if (exportedParts.Contains(modelPath))
+            {
+                Console.WriteLine($"⚠️ Skipping duplicate part: {modelPath}");
+                return;
+            }
+            exportedParts.Add(modelPath);
+
+            string name = Path.GetFileNameWithoutExtension(modelPath);
+            if (name.EndsWith(".step", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - 5);
+
+            string safeName = string.Concat(name.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+
+            // --- Add numbering prefix ---
+            if (!folderCounters.ContainsKey(outputFolder))
+                folderCounters[outputFolder] = 1; // start at 1 if not initialized
+
+            int count = folderCounters[outputFolder];
+            folderCounters[outputFolder]++; // increment for next part
+
+            string numberedName = $"{count:00}_{safeName}";
+            string outPath = Path.Combine(outputFolder, numberedName + ".dxf");
+            // ----------------------------
+
+            // DXF export options
+            int saveErr = 0, saveWarn = 0;
+
+            // --- Special case: Sheet metal flat pattern ---
+            PartDoc part = partModel as PartDoc;
+
+            bool contains = ContainsSheetMetal(part);
+
+            int state = partModel.GetBendState();
+
+
+
+            if (part != null && state != (int)swSMBendState_e.swSMBendStateNone)
+            {
+                
+                bool result = part.ExportToDWG2(
+                outPath,                        // FilePath (DXF output path)
+                partModel.GetPathName(),        // ModelName
+                (int)swExportToDWG_e.swExportToDWG_ExportSheetMetal, // Action
+                true,                           // ExportToSingleFile
+                null,                           // Alignment
+                false,                          // IsXDirFlipped
+                false,                          // IsYDirFlipped
+                13, // or 0
+                null                            // Views
+                );
+
+                Console.WriteLine(result
+                    ? $"✅ Sheet metal flat pattern DXF saved: {outPath}"
+                    : $"❌ Failed to export DXF: {outPath}");
+
+                
+            }
+            else
+            {
+                // --- Normal parts: Save as DXF (3D or 2D projection) ---
+
+                string template = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Templates", "A4 - Landscape.DRWDOT");
+
+                ModelDoc2 drwModel = swApp.NewDocument(template, (int)swDwgPaperSizes_e.swDwgPaperA4size, 0, 0);
+                if (drwModel == null)
+                {
+                    Console.WriteLine($"❌ Failed to create drawing for {name}");
+                    return;
+                }
+
+                DrawingDoc drwDoc = (DrawingDoc)drwModel;
+                drwDoc.Create3rdAngleViews2(partModel.GetPathName());
+                
+
+                // Save drawing as DXF
+                ModelDocExtension ext = drwModel.Extension;
+                bool status = ext.SaveAs(outPath,
+                    (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
+                    (int)swSaveAsOptions_e.swSaveAsOptions_Silent,
+                    null, ref saveErr, ref saveWarn);
+
+                Console.WriteLine(status
+                    ? $"✅ Drawing DXF exported: {outPath}"
+                    : $"❌ Failed to export DXF (Err={saveErr}, Warn={saveWarn})");
+
+                swApp.CloseDoc(drwModel.GetTitle());
+            }
+        }
+
     }
 }
